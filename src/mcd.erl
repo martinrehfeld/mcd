@@ -677,10 +677,17 @@ do_forwarder(Method, ServerRef, Req) ->
 	end.
 
 %% Convert arbitrary Erlang term into memcached key
-%% @spec mcdkey(term()) -> binary()
+%% @spec mcdkey(term()) -> {binary(), binary()}
 %% @spec b64(binary()) -> binary()
-mcdkey(Key) -> erlang:md5(term_to_binary(Key)).
-b64(Key)    -> base64:encode(Key).
+mcdkey(Key) ->
+	case application:get_env(mcd, raw_keys, false) of
+		true  ->
+			{Key, Key};
+		false ->
+			HashedKey = erlang:md5(term_to_binary(Key)),
+			{HashedKey, b64(HashedKey)}
+	end.
+b64(Key) -> base64:encode(Key).
 
 %% Translate a query tuple into memcached protocol string and the
 %% atom suggesting a procedure for parsing memcached server response.
@@ -702,23 +709,23 @@ constructMemcachedQuery({replace, Key, Data}) ->
 constructMemcachedQuery({replace, Key, Data, Flags, Expiration}) ->
 	constructMemcachedQueryCmd("replace", Key, Data, Flags, Expiration);
 constructMemcachedQuery({get, Key}) ->
-	McdKey = mcdkey(Key),
-	{McdKey, ["get ", b64(McdKey), "\r\n"], rtGet};
+	{McdKey, McdKeyEncoded} = mcdkey(Key),
+	{McdKey, ["get ", McdKeyEncoded, "\r\n"], rtGet};
 % <BC>
 constructMemcachedQuery({delete, Key, _}) ->
 	constructMemcachedQuery({delete, Key});
 % </BC>
 constructMemcachedQuery({delete, Key}) ->
-	McdKey = mcdkey(Key),
-	{McdKey, ["delete ", b64(McdKey), "\r\n"], rtDel};
+	{McdKey, McdKeyEncoded} = mcdkey(Key),
+	{McdKey, ["delete ", McdKeyEncoded, "\r\n"], rtDel};
 constructMemcachedQuery({incr, Key, Value})
 		when is_integer(Value), Value >= 0 ->
-	McdKey = mcdkey(Key),
-	{McdKey, ["incr ", b64(McdKey), " ", integer_to_list(Value), "\r\n"], rtInt};
+	{McdKey, McdKeyEncoded} = mcdkey(Key),
+	{McdKey, ["incr ", McdKeyEncoded, " ", integer_to_list(Value), "\r\n"], rtInt};
 constructMemcachedQuery({decr, Key, Value})
 		when is_integer(Value), Value >= 0 ->
-	McdKey = mcdkey(Key),
-	{McdKey, ["decr ", b64(McdKey), " ", integer_to_list(Value), "\r\n"], rtInt};
+	{McdKey, McdKeyEncoded} = mcdkey(Key),
+	{McdKey, ["decr ", McdKeyEncoded, " ", integer_to_list(Value), "\r\n"], rtInt};
 constructMemcachedQuery({flush_all, Expiration})
 		when is_integer(Expiration), Expiration >= 0 ->
 	{<<>>, ["flush_all ", integer_to_list(Expiration), "\r\n"], rtFlush};
@@ -738,8 +745,8 @@ constructMemcachedQueryCmd(Cmd, Key, Data, Flags, Exptime)
 	when is_list(Cmd), is_integer(Flags), is_integer(Exptime),
 	Flags >= 0, Flags < 65536, Exptime >= 0 ->
 	BinData = term_to_binary(Data),
-	McdKey = mcdkey(Key),
-	{McdKey, [Cmd, " ", b64(McdKey), " ", integer_to_list(Flags), " ",
+	{McdKey, McdKeyEncoded} = mcdkey(Key),
+	{McdKey, [Cmd, " ", McdKeyEncoded, " ", integer_to_list(Flags), " ",
 		integer_to_list(Exptime), " ",
 		integer_to_list(size(BinData)),
 		"\r\n", BinData, "\r\n"], rtCmd}.

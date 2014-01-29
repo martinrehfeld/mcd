@@ -235,7 +235,7 @@ is_connectivity_failure(_) -> false.
 forwardQueryToMCD(From, Ring, Filter, {'$constructed_query', McdKey, _} = Q) ->
     forwardQueryToMCD(From, Ring, Filter, McdKey, Q);
 forwardQueryToMCD(From, Ring, Filter, {get, Key} = Q) ->
-    McdKey = mcd:mcdkey(Key),
+    {McdKey, _} = mcd:mcdkey(Key),
     forwardQueryToMCD(From, Ring, Filter, McdKey, Q).
 
 forwardQueryToMCD(From, Ring, Filter, McdKey, Q) ->
