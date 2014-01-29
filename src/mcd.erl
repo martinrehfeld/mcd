@@ -1,4 +1,4 @@
-%%% 
+%%%
 %%% Copyright (c) 2007-2014 JackNyfe, Inc. <info@jacknyfe.com>
 %%% All rights reserved.
 %%%
@@ -22,7 +22,7 @@
 %%% LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
 %%% OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 %%% SUCH DAMAGE.
-%%% 
+%%%
 %%% This module uses memcached protocol to interface memcached daemon:
 %%% http://code.sixapart.com/svn/memcached/trunk/server/doc/protocol.txt
 %%%
@@ -68,7 +68,7 @@
 %%%   Value: int()>=0
 %%%   Time: int()>=0
 %%%   Reason: noconn | notfound | notstored | overload | timeout | noproc | all_nodes_down
-%%% 
+%%%
 -module(mcd).
 -behavior(gen_server).
 
@@ -97,6 +97,7 @@
 	ldelete/1,
 	lflush_all/0
 ]). % <cmd>('localmcd', ...)
+-export([mcdkey/1]).
 -export([monitor/3]).
 -export([data_receiver_loop/3]).
 
@@ -341,7 +342,7 @@ unload_connection(ServerRef) ->
 % gen_server callbacks
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--record(state, { 
+-record(state, {
 	address, port = 11211, socket = nosocket,
 	receiver,		% data receiver process
 	requests = 0,		% client requests received
@@ -573,7 +574,7 @@ reconnect(#state{address = Address, port = Port, socket = OldSock} = State) ->
 
 	NewAnomalies = case is_atom(State#state.status) of
 		false -> State#state.anomalies;
-		true -> 
+		true ->
 			reportEvent(State, state, down),
 			incrAnomaly(State#state.anomalies, reconnects)
 	end,
@@ -637,11 +638,11 @@ scheduleQuery(State, _Query, From) ->
 			State
 	end.
 
-constructAndSendQuery(From, {'$constructed_query', _KeyMD5, {OTARequest, ReqType, ExpectationFlags}}, Socket, {RcvrPid, _}) ->
+constructAndSendQuery(From, {'$constructed_query', _KeyMcd, {OTARequest, ReqType, ExpectationFlags}}, Socket, {RcvrPid, _}) ->
 	RcvrPid ! {accept_response, From, ReqType, ExpectationFlags},
 	gen_tcp:send(Socket, OTARequest);
 constructAndSendQuery(From, Query, Socket, {RcvrPid, _}) ->
-	{_MD5Key, OTARequest, ReqType} = constructMemcachedQuery(Query),
+	{_McdKey, OTARequest, ReqType} = constructMemcachedQuery(Query),
 	RcvrPid ! {accept_response, From, ReqType, []},
 	gen_tcp:send(Socket, OTARequest).
 
@@ -650,10 +651,10 @@ constructAndSendQuery(From, Query, Socket, {RcvrPid, _}) ->
 %% or cast a message asynchronously, without waiting for the result.
 %%
 do_forwarder(Method, ServerRef, Req) ->
-	{KeyMD5, IOL, T} = constructMemcachedQuery(Req),
+	{KeyMcd, IOL, T} = constructMemcachedQuery(Req),
 	Q = iolist_to_binary(IOL),
 	try gen_server:Method(ServerRef,
-			{'$constructed_query', KeyMD5, {Q, T, [raw_blob]}}) of
+			{'$constructed_query', KeyMcd, {Q, T, [raw_blob]}}) of
 
 		% Return the actual Data piece which got stored on the
 		% server. Since returning Data happens inside the single
@@ -676,15 +677,15 @@ do_forwarder(Method, ServerRef, Req) ->
 	end.
 
 %% Convert arbitrary Erlang term into memcached key
-%% @spec md5(term()) -> binary()
+%% @spec mcdkey(term()) -> binary()
 %% @spec b64(binary()) -> binary()
-md5(Key) -> erlang:md5(term_to_binary(Key)).
-b64(Key) -> base64:encode(Key).
+mcdkey(Key) -> erlang:md5(term_to_binary(Key)).
+b64(Key)    -> base64:encode(Key).
 
 %% Translate a query tuple into memcached protocol string and the
 %% atom suggesting a procedure for parsing memcached server response.
 %%
-%% @spec constructMemcachedQuery(term()) -> {md5(), iolist(), ResponseKind}
+%% @spec constructMemcachedQuery(term()) -> {mcdkey(), iolist(), ResponseKind}
 %% Type ResponseKind = atom()
 %%
 constructMemcachedQuery({version}) -> {<<>>, [<<"version\r\n">>], rtVer};
@@ -701,23 +702,23 @@ constructMemcachedQuery({replace, Key, Data}) ->
 constructMemcachedQuery({replace, Key, Data, Flags, Expiration}) ->
 	constructMemcachedQueryCmd("replace", Key, Data, Flags, Expiration);
 constructMemcachedQuery({get, Key}) ->
-	MD5Key = md5(Key),
-	{MD5Key, ["get ", b64(MD5Key), "\r\n"], rtGet};
+	McdKey = mcdkey(Key),
+	{McdKey, ["get ", b64(McdKey), "\r\n"], rtGet};
 % <BC>
 constructMemcachedQuery({delete, Key, _}) ->
 	constructMemcachedQuery({delete, Key});
 % </BC>
 constructMemcachedQuery({delete, Key}) ->
-	MD5Key = md5(Key),
-	{MD5Key, ["delete ", b64(MD5Key), "\r\n"], rtDel};
+	McdKey = mcdkey(Key),
+	{McdKey, ["delete ", b64(McdKey), "\r\n"], rtDel};
 constructMemcachedQuery({incr, Key, Value})
 		when is_integer(Value), Value >= 0 ->
-	MD5Key = md5(Key),
-	{MD5Key, ["incr ", b64(MD5Key), " ", integer_to_list(Value), "\r\n"], rtInt};
+	McdKey = mcdkey(Key),
+	{McdKey, ["incr ", b64(McdKey), " ", integer_to_list(Value), "\r\n"], rtInt};
 constructMemcachedQuery({decr, Key, Value})
 		when is_integer(Value), Value >= 0 ->
-	MD5Key = md5(Key),
-	{MD5Key, ["decr ", b64(MD5Key), " ", integer_to_list(Value), "\r\n"], rtInt};
+	McdKey = mcdkey(Key),
+	{McdKey, ["decr ", b64(McdKey), " ", integer_to_list(Value), "\r\n"], rtInt};
 constructMemcachedQuery({flush_all, Expiration})
 		when is_integer(Expiration), Expiration >= 0 ->
 	{<<>>, ["flush_all ", integer_to_list(Expiration), "\r\n"], rtFlush};
@@ -728,7 +729,7 @@ constructMemcachedQuery({flush_all}) -> {<<>>, ["flush_all\r\n"], rtFlush}.
 %% their own category of commands (say, ternary command). These commads'
 %% construction is handled by this function.
 %%
-%% @spec constructMemcachedQuery(term()) -> {md5(), iolist(), ResponseKind}
+%% @spec constructMemcachedQuery(term()) -> {mcdkey(), iolist(), ResponseKind}
 %% Type ResponseKind = atom()
 %%
 constructMemcachedQueryCmd(Cmd, Key, Data) ->
@@ -737,8 +738,8 @@ constructMemcachedQueryCmd(Cmd, Key, Data, Flags, Exptime)
 	when is_list(Cmd), is_integer(Flags), is_integer(Exptime),
 	Flags >= 0, Flags < 65536, Exptime >= 0 ->
 	BinData = term_to_binary(Data),
-	MD5Key = md5(Key),
-	{MD5Key, [Cmd, " ", b64(MD5Key), " ", integer_to_list(Flags), " ",
+	McdKey = mcdkey(Key),
+	{McdKey, [Cmd, " ", b64(McdKey), " ", integer_to_list(Flags), " ",
 		integer_to_list(Exptime), " ",
 		integer_to_list(size(BinData)),
 		"\r\n", BinData, "\r\n"], rtCmd}.

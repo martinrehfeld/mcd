@@ -1,4 +1,4 @@
-%%% 
+%%%
 %%% Copyright (c) 2008-2014 JackNyfe, Inc. <info@jacknyfe.com>
 %%% All rights reserved.
 %%%
@@ -181,28 +181,28 @@ log_problems(Node, Command, Start, Res) ->
         {_, {exception, _}} -> true;
         _ -> false
     end,
-    case ShouldLog of 
+    case ShouldLog of
         true ->
-            MD5 = case Command of
+            McdKey = case Command of
                 {'$constructed_query', M, _} -> M;
                 _ -> Command
             end,
-            lager:warning([{tag, mcd_long_response}], 
+            lager:warning([{tag, mcd_long_response}],
                 "Request took more than ~pms or exception caught: ~n"
                 "Node:~p~n"
-                "MD5:~p~n"
+                "McdKey:~p~n"
                 "Res:~p~n"
-                "Time:~pms~n", [Threshold div 1000, Node, MD5, Res, Diff div 1000]);
+                "Time:~pms~n", [Threshold div 1000, Node, McdKey, Res, Diff div 1000]);
         _ -> nop
     end.
 
 call_node({_Name, ServerRef}=Node, Command) ->
     Start = now(),
     try gen_server:call(ServerRef, Command) of
-        Res -> 
+        Res ->
             log_problems(Node, Command, Start, Res),
             Res
-    catch C:R -> 
+    catch C:R ->
         log_problems(Node, Command, Start, {exception, {C,R}}),
         erlang:raise(C, R, erlang:get_stacktrace())
     end.
@@ -232,14 +232,14 @@ is_connectivity_failure(_) -> false.
 
 %%%
 
-forwardQueryToMCD(From, Ring, Filter, {'$constructed_query', MD5Key, _} = Q) ->
-    forwardQueryToMCD(From, Ring, Filter, MD5Key, Q);
+forwardQueryToMCD(From, Ring, Filter, {'$constructed_query', McdKey, _} = Q) ->
+    forwardQueryToMCD(From, Ring, Filter, McdKey, Q);
 forwardQueryToMCD(From, Ring, Filter, {get, Key} = Q) ->
-    MD5Key = erlang:md5(term_to_binary(Key)),
-    forwardQueryToMCD(From, Ring, Filter, MD5Key, Q).
+    McdKey = mcd:mcdkey(Key),
+    forwardQueryToMCD(From, Ring, Filter, McdKey, Q).
 
-forwardQueryToMCD(From, Ring, Filter, MD5Key, Q) ->
-    NodeList = case MD5Key of
+forwardQueryToMCD(From, Ring, Filter, McdKey, Q) ->
+    NodeList = case McdKey of
         <<>> -> dht_ring:nodes(Ring);
         Bin -> dht_ring:lookup(Ring, Bin)
     end,
