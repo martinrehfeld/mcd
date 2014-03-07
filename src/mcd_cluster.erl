@@ -250,7 +250,6 @@ forwardQueryToMCD(From, Ring, Filter, McdKey, Q) ->
             Reply2 =
                 case Reply of
                     {error, nonodes} ->
-                        lager:error("Node ~p doesn't see others: ~p~n", [node(), NodeList]),
                         {error, all_nodes_down};
                     _ -> Reply
                 end,
