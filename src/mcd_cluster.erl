@@ -29,10 +29,10 @@
     add/2,
     delete/2,
     stop/1,
-    forwardQueryToMCD/4
+    forwardQueryToMCD/5
 ]).
 
--record(state, {ring, down = []}).
+-record(state, {ring, down = [], failover}).
 
 -type node_params() :: [{atom(), mcd:start_params(), pos_integer()}, ...].
 
@@ -86,11 +86,11 @@ code_change(_OldVsn, State, _Extra) ->
 
 %%%
 
-handle_call({'$constructed_query', _, _} = ReadyQuery, From, #state{ring=Ring, down = PidsDown}=State) ->
-    spawn(?MODULE, forwardQueryToMCD, [From, Ring, mk_down_filter(PidsDown), ReadyQuery]),
+handle_call({'$constructed_query', _, _} = ReadyQuery, From, #state{ring=Ring, down = PidsDown, failover = Failover}=State) ->
+    spawn(?MODULE, forwardQueryToMCD, [From, Ring, mk_down_filter(PidsDown), Failover, ReadyQuery]),
     {noreply, State};
-handle_call({get, _} = ReadyQuery, From, #state{ring=Ring, down = PidsDown}=State) ->
-    spawn(?MODULE, forwardQueryToMCD, [From, Ring, mk_down_filter(PidsDown), ReadyQuery]),
+handle_call({get, _} = ReadyQuery, From, #state{ring=Ring, down = PidsDown, failover = Failover}=State) ->
+    spawn(?MODULE, forwardQueryToMCD, [From, Ring, mk_down_filter(PidsDown), Failover, ReadyQuery]),
     {noreply, State};
 
 handle_call(get_nodes, _From, #state{ring = Ring} = State) ->
@@ -135,8 +135,8 @@ handle_call(_Request, _From, State) ->
 
 %%%
 
-handle_cast({'$constructed_query', _, _} = ReadyQuery, #state{ring=Ring,down=PidsDown}=State) ->
-    spawn(?MODULE, forwardQueryToMCD, [anon, Ring, mk_down_filter(PidsDown), ReadyQuery]),
+handle_cast({'$constructed_query', _, _} = ReadyQuery, #state{ring=Ring,down=PidsDown,failover=Failover}=State) ->
+    spawn(?MODULE, forwardQueryToMCD, [anon, Ring, mk_down_filter(PidsDown), Failover, ReadyQuery]),
     {noreply, State};
 
 handle_cast(_Request, State) ->
@@ -163,7 +163,7 @@ init([ClusterName, Nodes]) ->
                 {Name, Pid, Weight}
             end, Nodes),
     {ok, Ring} = dht_ring:start_link(Peers),
-    {ok, #state{ ring = Ring }}.
+    {ok, #state{ ring = Ring, failover = application:get_env(mcd, failover, true) }}.
 
 terminate(_Reason, _State) ->
     ok.
@@ -209,20 +209,25 @@ call_node({_Name, ServerRef}=Node, Command) ->
 
 %%%
 
-call_nodes([], _, _) -> {error, nonodes};
+call_nodes([], _, _, _) -> {error, nonodes};
 
-call_nodes([Node | OtherNodes], Filter, Command) ->
+call_nodes([Node | OtherNodes], Filter, Failover, Command) ->
     case Filter(Node) of
         true  ->
             Reply = call_node(Node, Command),
-            case is_connectivity_failure(Reply) of
+            case Failover andalso is_connectivity_failure(Reply) of
                 true ->
-                    call_nodes(OtherNodes, Filter, Command);
+                    call_nodes(OtherNodes, Filter, Failover, Command);
                 false ->
                     Reply
             end;
         false ->
-            call_nodes(OtherNodes, Filter, Command)
+            case Failover of
+                true ->
+                    call_nodes(OtherNodes, Filter, Failover, Command);
+                false ->
+                    {error, noconn}
+            end
     end.
 
 %%%
@@ -232,18 +237,18 @@ is_connectivity_failure(_) -> false.
 
 %%%
 
-forwardQueryToMCD(From, Ring, Filter, {'$constructed_query', McdKey, _} = Q) ->
-    forwardQueryToMCD(From, Ring, Filter, McdKey, Q);
-forwardQueryToMCD(From, Ring, Filter, {get, Key} = Q) ->
+forwardQueryToMCD(From, Ring, Filter, Failover, {'$constructed_query', McdKey, _} = Q) ->
+    forwardQueryToMCD(From, Ring, Filter, Failover, McdKey, Q);
+forwardQueryToMCD(From, Ring, Filter, Failover, {get, Key} = Q) ->
     {McdKey, _} = mcd:mcdkey(Key),
-    forwardQueryToMCD(From, Ring, Filter, McdKey, Q).
+    forwardQueryToMCD(From, Ring, Filter, Failover, McdKey, Q).
 
-forwardQueryToMCD(From, Ring, Filter, McdKey, Q) ->
+forwardQueryToMCD(From, Ring, Filter, Failover, McdKey, Q) ->
     NodeList = case McdKey of
         <<>> -> dht_ring:nodes(Ring);
         Bin -> dht_ring:lookup(Ring, Bin)
     end,
-    Reply = call_nodes(NodeList, Filter, Q),
+    Reply = call_nodes(NodeList, Filter, Failover, Q),
     case From of
         anon -> ok;
         _ ->
