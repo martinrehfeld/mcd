@@ -80,6 +80,7 @@
 % </BC>
 -export([
 	get/2,
+	gets/2,
 	set/3,
 	set/4,
 	set/5,
@@ -92,6 +93,7 @@
 -export([
 	lserver/0,
 	lget/1,
+	lgets/1,
 	lset/2,
 	lset/3,
 	ldelete/1,
@@ -114,6 +116,7 @@
 	delete_errors/0,
 
 	get_result/0,
+	gets_result/0,
 	set_result/0,
 	delete_result/0,
 	flush_result/0,
@@ -138,7 +141,10 @@
 -type expiration() :: non_neg_integer().
 -type flags() :: 0..65535.
 
+-type token() :: string().
+
 -type get_result() :: {'ok', term()} | {'error', get_errors()}.
+-type gets_result() :: {'ok', term(), token()} | {'error', get_errors()}.
 -type set_result() :: {'ok', term()} | {'error', set_errors()}.
 -type delete_result() :: {'ok', 'deleted'} | {'error', delete_errors()}.
 -type flush_result() :: {'ok', 'flushed'} | {'error', common_errors()}.
@@ -152,13 +158,13 @@
 -type simple_command() :: 'version' | 'flush_all'.
 -type simple_request() :: simple_command() | {simple_command()} | {'flush_all', expiration()}.
 
--type key_command() :: 'get' | 'delete'.
+-type key_command() :: 'get' | 'gets' | 'delete'.
 -type key_request() :: key_command() | {key_command()}.
 
 -type key_data_command() :: 'set' | 'add' | 'replace'.
 -type key_data_request() :: key_data_command() | {key_data_command()} | {key_data_command(), flags(), expiration()}.
 
--type do_result() :: {'ok', term()} | {'error', get_errors() | set_errors() | delete_errors()}.
+-type do_result() :: {'ok', term()} | {'ok', term(), token()} | {'error', get_errors() | set_errors() | delete_errors()}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Public API
@@ -201,7 +207,7 @@ start_link(Name, [Address, Port]) when is_atom(Name) ->
 
 -spec do(ServerRef :: server(), SimpleRequest :: simple_request()) -> do_result().
 do(ServerRef, SimpleRequest) when is_atom(SimpleRequest) ->
-	do_forwarder(call, ServerRef, {SimpleRequest});
+do_forwarder(call, ServerRef, {SimpleRequest});
 do(ServerRef, SimpleRequest) when is_tuple(SimpleRequest) ->
 	do_forwarder(call, ServerRef, SimpleRequest).
 
@@ -239,6 +245,9 @@ ldo(set, Key, Data, Flag, Expires) ->
 -spec get(ServerRef :: server(), Key :: term()) -> get_result().
 get(ServerRef, Key) -> do(ServerRef, get, Key).
 
+-spec gets(ServerRef :: server(), Key :: term()) -> gets_result().
+gets(ServerRef, Key) -> do(ServerRef, gets, Key).
+
 -spec set(ServerRef :: server(), Key :: term(), Data :: term()) -> set_result().
 set(ServerRef, Key, Data) -> do(ServerRef, set, Key, Data).
 
@@ -264,6 +273,9 @@ lserver() -> ?LOCALMCDNAME.
 
 -spec lget(Key :: term()) -> get_result().
 lget(Key) -> get(?LOCALMCDNAME, Key).
+
+-spec lgets(Key :: term()) -> gets_result().
+lgets(Key) -> gets(?LOCALMCDNAME, Key).
 
 -spec lset(Key :: term(), Data :: term()) -> set_result().
 lset(Key, Data) -> set(?LOCALMCDNAME, Key, Data).
@@ -667,6 +679,7 @@ do_forwarder(Method, ServerRef, Req) ->
 		% process space to avoid inter-process copying of potentially
 		% complex data structures.
 		{ok, {'$value_blob', B}} -> {ok, binary_to_term(B)};
+		{ok, {'$value_blob', B}, Token} -> {ok, binary_to_term(B), Token};
 
 		Response -> Response
 	catch
@@ -711,6 +724,9 @@ constructMemcachedQuery({replace, Key, Data, Flags, Expiration}) ->
 constructMemcachedQuery({get, Key}) ->
 	{McdKey, McdKeyEncoded} = mcdkey(Key),
 	{McdKey, ["get ", McdKeyEncoded, "\r\n"], rtGet};
+constructMemcachedQuery({gets, Key}) ->
+	{McdKey, McdKeyEncoded} = mcdkey(Key),
+	{McdKey, ["gets ", McdKeyEncoded, "\r\n"], rtGets};
 % <BC>
 constructMemcachedQuery({delete, Key, _}) ->
 	constructMemcachedQuery({delete, Key});
@@ -801,6 +817,24 @@ data_receiver_accept_response(rtGet, ExpFlags, Socket) ->
 		case proplists:get_value(raw_blob, ExpFlags) of
 			true -> {ok, {'$value_blob', Bin}};
 			_ -> {ok, binary_to_term(Bin)}
+		end
+	end;
+data_receiver_accept_response(rtGets, ExpFlags, Socket) ->
+	{ok, HeaderLine} = gen_tcp:recv(Socket, 0),
+	case HeaderLine of
+	  % Quick test before embarking on tokenizing
+	  <<"END\r\n">> -> {error, notfound};
+	  <<"SERVER_ERROR ",_/binary>> -> {error, notfound};
+	  _ ->
+		["VALUE", _Value, _Flag, DataSizeStr, Token]
+			= string:tokens(binary_to_list(HeaderLine), " \r\n"),
+		ok = inet:setopts(Socket, [{packet, raw}]),
+		Bin = data_receive_binary(Socket, list_to_integer(DataSizeStr)),
+		<<"\r\nEND\r\n">> = data_receive_binary(Socket, 7),
+		ok = inet:setopts(Socket, [{packet, line}]),
+		case proplists:get_value(raw_blob, ExpFlags) of
+			true -> {ok, {'$value_blob', Bin}, Token};
+			_ -> {ok, binary_to_term(Bin), Token}
 		end
 	end;
 data_receiver_accept_response(rtInt, _, Socket) ->

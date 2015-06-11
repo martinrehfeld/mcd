@@ -50,9 +50,11 @@ test_do(_Config) ->
     {ok, flushed} = mcd:do(?BUCKET, flush_all),
     {ok, flushed} = mcd:do(?BUCKET, {flush_all, 10}),
     {error, notfound} = mcd:do(?BUCKET, get, ?KEY),
+    {error, notfound} = mcd:do(?BUCKET, gets, ?KEY),
     {error, notfound} = mcd:do(?BUCKET, delete, ?KEY),
     try
         {ok, ?VALUE} = mcd:do(?BUCKET, set, ?KEY, ?VALUE),
+        {ok, ?VALUE, _Token} = mcd:do(?BUCKET, gets, ?KEY),
         {error, notstored} = mcd:do(?BUCKET, add, ?KEY, ?VALUE),
         {ok, ?VALUE} = mcd:do(?BUCKET, replace, ?KEY, ?VALUE),
         {ok, ?VALUE} = mcd:do(?BUCKET, {set, 0, ?TTL}, ?KEY, ?VALUE),
