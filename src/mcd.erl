@@ -87,6 +87,9 @@
 	add/3,
 	add/4,
 	add/5,
+	cas/4,
+	cas/5,
+	cas/6,
 	delete/2,
 	async_set/3,
 	async_set/4,
@@ -103,6 +106,9 @@
 	ladd/2,
 	ladd/3,
 	ladd/4,
+	lcas/3,
+	lcas/4,
+	lcas/5,
 	ldelete/1,
 	lflush_all/0
 ]). % <cmd>('localmcd', ...)
@@ -121,10 +127,12 @@
 	get_errors/0,
 	set_errors/0,
 	delete_errors/0,
+	cas_errors/0,
 
 	get_result/0,
 	gets_result/0,
 	set_result/0,
+	cas_result/0,
 	delete_result/0,
 	flush_result/0,
 	version_result/0
@@ -143,6 +151,7 @@
 -type get_errors() :: common_errors() | 'notfound'.
 -type set_errors() :: common_errors() | 'notstored'.
 -type delete_errors() :: get_errors().
+-type cas_errors() :: get_errors() | 'exists'.
 
 -type server() :: atom() | {atom(), node()} | pid().
 -type expiration() :: non_neg_integer().
@@ -153,6 +162,7 @@
 -type get_result() :: {'ok', term()} | {'error', get_errors()}.
 -type gets_result() :: {'ok', term(), token()} | {'error', get_errors()}.
 -type set_result() :: {'ok', term()} | {'error', set_errors()}.
+-type cas_result() :: {'ok', term()} | {'error', cas_errors()}.
 -type delete_result() :: {'ok', 'deleted'} | {'error', delete_errors()}.
 -type flush_result() :: {'ok', 'flushed'} | {'error', common_errors()}.
 -type version_result() :: {'ok', nonempty_string()} | {'error', common_errors()}.
@@ -229,8 +239,12 @@ do(ServerRef, KeyDataReq, Key, Data) when is_atom(KeyDataReq) ->
 	do_forwarder(call, ServerRef, {KeyDataReq, Key, Data});
 do(ServerRef, {Cmd}, Key, Data) ->
 	do_forwarder(call, ServerRef, {Cmd, Key, Data});
+do(ServerRef, {Cmd, Token}, Key, Data) ->
+	do_forwarder(call, ServerRef, {Cmd, Key, Data, Token});
 do(ServerRef, {Cmd, Flag, Expires}, Key, Data) when is_integer(Flag), is_integer(Expires), Flag >= 0, Flag < 65536, Expires >= 0 ->
-	do_forwarder(call, ServerRef, {Cmd, Key, Data, Flag, Expires}).
+	do_forwarder(call, ServerRef, {Cmd, Key, Data, Flag, Expires});
+do(ServerRef, {Cmd, Flag, Expires, Token}, Key, Data) when is_integer(Flag), is_integer(Expires), Flag >= 0, Flag < 65536, Expires >= 0 ->
+	do_forwarder(call, ServerRef, {Cmd, Key, Data, Flag, Expires, Token}).
 
 -define(LOCALMCDNAME, localmcd).
 %%
@@ -276,6 +290,15 @@ add(ServerRef, Key, Data, Expiration) -> do(ServerRef, {add, 0, Expiration}, Key
 -spec add(ServerRef :: server(), Key :: term(), Data :: term(), Expiration :: expiration(), Flags :: flags()) -> set_result().
 add(ServerRef, Key, Data, Expiration, Flags) -> do(ServerRef, {add, Flags, Expiration}, Key, Data).
 
+-spec cas(ServerRef :: server(), Key :: term(), Data :: term(), Token :: token()) -> cas_result().
+cas(ServerRef, Key, Data, Token) -> do(ServerRef, {cas, Token}, Key, Data).
+
+-spec cas(ServerRef :: server(), Key :: term(), Data :: term(), Token :: token(), Expiration :: expiration()) -> cas_result().
+cas(ServerRef, Key, Data, Token, Expiration) -> do(ServerRef, {cas, 0, Expiration, Token}, Key, Data).
+
+-spec cas(ServerRef :: server(), Key :: term(), Data :: term(), Token :: token(), Expiration :: expiration(), Flags :: flags()) -> cas_result().
+cas(ServerRef, Key, Data, Token, Expiration, Flags) -> do(ServerRef, {cas, Flags, Expiration, Token}, Key, Data).
+
 -spec delete(ServerRef :: server(), Key :: term()) -> delete_result().
 delete(ServerRef, Key) -> do(ServerRef, delete, Key).
 
@@ -310,6 +333,15 @@ ladd(Key, Data, Expiration) -> add(?LOCALMCDNAME, Key, Data, Expiration).
 
 -spec ladd(Key :: term(), Data :: term(), Expiration :: expiration(), Flags :: flags()) -> set_result().
 ladd(Key, Data, Expiration, Flags) -> add(?LOCALMCDNAME, Key, Data, Expiration, Flags).
+
+-spec lcas(Key :: term(), Data :: term(), Token :: token()) -> cas_result().
+lcas(Key, Data, Token) -> cas(?LOCALMCDNAME, Key, Data, Token).
+
+-spec lcas(Key :: term(), Data :: term(), Token :: token(), Expiration :: expiration()) -> cas_result().
+lcas(Key, Data, Token, Expiration) -> cas(?LOCALMCDNAME, Key, Data, Token, Expiration).
+
+-spec lcas(Key :: term(), Data :: term(), Token :: token(), Expiration :: expiration(), Flags :: flags()) -> cas_result().
+lcas(Key, Data, Token, Expiration, Flags) -> cas(?LOCALMCDNAME, Key, Data, Token, Expiration, Flags).
 
 -spec ldelete(Key :: term()) -> delete_result().
 ldelete(Key) -> delete(?LOCALMCDNAME, Key).
@@ -745,6 +777,10 @@ constructMemcachedQuery({add, Key, Data}) ->
 	constructMemcachedQueryCmd("add", Key, Data);
 constructMemcachedQuery({add, Key, Data, Flags, Expiration}) ->
 	constructMemcachedQueryCmd("add", Key, Data, Flags, Expiration);
+constructMemcachedQuery({cas, Key, Data, Token}) ->
+	constructMemcachedQueryCmd("cas", Key, Data, Token);
+constructMemcachedQuery({cas, Key, Data, Flags, Expiration, Token}) ->
+	constructMemcachedQueryCmd("cas", Key, Data, Flags, Expiration, Token);
 constructMemcachedQuery({replace, Key, Data}) ->
 	constructMemcachedQueryCmd("replace", Key, Data);
 constructMemcachedQuery({replace, Key, Data, Flags, Expiration}) ->
@@ -785,6 +821,8 @@ constructMemcachedQuery({flush_all}) -> {<<>>, ["flush_all\r\n"], rtFlush}.
 %%
 constructMemcachedQueryCmd(Cmd, Key, Data) ->
 	constructMemcachedQueryCmd(Cmd, Key, Data, 0, 0).
+constructMemcachedQueryCmd(Cmd, Key, Data, Token) ->
+	constructMemcachedQueryCmd(Cmd, Key, Data, 0, 0, Token).
 constructMemcachedQueryCmd(Cmd, Key, Data, Flags, Exptime)
 	when is_list(Cmd), is_integer(Flags), is_integer(Exptime),
 	Flags >= 0, Flags < 65536, Exptime >= 0 ->
@@ -793,6 +831,16 @@ constructMemcachedQueryCmd(Cmd, Key, Data, Flags, Exptime)
 	{McdKey, [Cmd, " ", McdKeyEncoded, " ", integer_to_list(Flags), " ",
 		integer_to_list(Exptime), " ",
 		integer_to_list(size(BinData)),
+		"\r\n", BinData, "\r\n"], rtCmd}.
+constructMemcachedQueryCmd(Cmd, Key, Data, Flags, Exptime, Token)
+	when is_list(Cmd), is_integer(Flags), is_integer(Exptime),
+	Flags >= 0, Flags < 65536, Exptime >= 0, is_list(Token) ->
+	BinData = term_to_binary(Data),
+	{McdKey, McdKeyEncoded} = mcdkey(Key),
+	{McdKey, [Cmd, " ", McdKeyEncoded, " ", integer_to_list(Flags), " ",
+		integer_to_list(Exptime), " ",
+		integer_to_list(size(BinData)), " ",
+		Token,
 		"\r\n", BinData, "\r\n"], rtCmd}.
 
 replyBack(anon, _) -> true;
@@ -875,6 +923,8 @@ data_receiver_accept_response(rtInt, _, Socket) ->
 data_receiver_accept_response(rtCmd, _, Socket) ->
 	data_receiver_accept_choice(Socket,
 		[ {<<"STORED\r\n">>, {ok, stored}},
+		  {<<"EXISTS\r\n">>, {error, exists}},
+		  {<<"NOT_FOUND\r\n">>, {error, notfound}},
 		  {<<"NOT_STORED\r\n">>, {error, notstored}} ]);
 data_receiver_accept_response(rtDel, _, Socket) ->
 	data_receiver_accept_choice(Socket,

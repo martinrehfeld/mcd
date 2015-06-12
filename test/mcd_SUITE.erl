@@ -69,25 +69,21 @@ test_api(_Config) ->
     {ok, [_ | _]} = mcd:version(?BUCKET),
 
     GetFun = fun() -> mcd:get(?BUCKET, ?KEY) end,
-    GetsFun =
-        fun() ->
-                case mcd:gets(?BUCKET, ?KEY) of
-                    {ok, Val, _Token} -> {ok, Val};
-                    {error, Error} -> {error, Error}
-                end
-        end,
+    GetsFun = fun() -> mcd:gets(?BUCKET, ?KEY) end,
     DeleteFun = fun() -> mcd:delete(?BUCKET, ?KEY) end,
+    SetFun = fun() -> mcd:set(?BUCKET, ?KEY, ?VALUE) end,
 
     test_set(GetFun, DeleteFun, fun() -> mcd:add(?BUCKET, ?KEY, ?VALUE) end),
     test_not_stored(GetFun, DeleteFun, fun() -> mcd:add(?BUCKET, ?KEY, ?VALUE) end),
 
-    test_set(GetFun, DeleteFun, fun() -> mcd:set(?BUCKET, ?KEY, ?VALUE) end),
-    test_set(GetsFun, DeleteFun, fun() -> mcd:set(?BUCKET, ?KEY, ?VALUE) end),
+    test_set(GetFun, DeleteFun, SetFun),
     test_set_expiration(GetFun, DeleteFun, fun() -> mcd:set(?BUCKET, ?KEY, ?VALUE, ?TTL) end),
     test_set_expiration(GetFun, DeleteFun, fun() -> mcd:set(?BUCKET, ?KEY, ?VALUE, ?TTL, 0) end),
     test_set(GetFun, DeleteFun, fun() -> {ok, mcd:async_set(?BUCKET, ?KEY, ?VALUE)} end),
     test_set_expiration(GetFun, DeleteFun, fun() -> {ok, mcd:async_set(?BUCKET, ?KEY, ?VALUE, ?TTL)} end),
-    test_set_expiration(GetFun, DeleteFun, fun() -> {ok, mcd:async_set(?BUCKET, ?KEY, ?VALUE, ?TTL, 0)} end).
+    test_set_expiration(GetFun, DeleteFun, fun() -> {ok, mcd:async_set(?BUCKET, ?KEY, ?VALUE, ?TTL, 0)} end),
+
+    test_cas(GetsFun, DeleteFun, SetFun, fun(Token) -> mcd:cas(?BUCKET, ?KEY, ?VALUE, Token) end).
 
 test_common_errors(_Config) ->
     {_, Pid} = hd(mcd_cluster:nodes(?BUCKET)),
@@ -175,6 +171,17 @@ test_not_stored(GetFun, DeleteFun, SetFun) ->
         {ok, ?VALUE} = GetFun(),
         {ok, deleted} = DeleteFun(),
         {error, notfound} = GetFun()
+    after
+        DeleteFun()
+    end.
+
+test_cas(GetsFun, DeleteFun, SetFun, CasFun) ->
+    {error, notfound} = CasFun("123"),
+    try
+        {ok, ?VALUE} = SetFun(),
+        {ok, ?VALUE, Token} = GetsFun(),
+        {ok, ?VALUE} = CasFun(Token),
+        {error, exists} = CasFun("123")
     after
         DeleteFun()
     end.
