@@ -69,9 +69,20 @@ test_api(_Config) ->
     {ok, [_ | _]} = mcd:version(?BUCKET),
 
     GetFun = fun() -> mcd:get(?BUCKET, ?KEY) end,
+    GetsFun =
+        fun() ->
+                case mcd:gets(?BUCKET, ?KEY) of
+                    {ok, Val, _Token} -> {ok, Val};
+                    {error, Error} -> {error, Error}
+                end
+        end,
     DeleteFun = fun() -> mcd:delete(?BUCKET, ?KEY) end,
 
+    test_set(GetFun, DeleteFun, fun() -> mcd:add(?BUCKET, ?KEY, ?VALUE) end),
+    test_not_stored(GetFun, DeleteFun, fun() -> mcd:add(?BUCKET, ?KEY, ?VALUE) end),
+
     test_set(GetFun, DeleteFun, fun() -> mcd:set(?BUCKET, ?KEY, ?VALUE) end),
+    test_set(GetsFun, DeleteFun, fun() -> mcd:set(?BUCKET, ?KEY, ?VALUE) end),
     test_set_expiration(GetFun, DeleteFun, fun() -> mcd:set(?BUCKET, ?KEY, ?VALUE, ?TTL) end),
     test_set_expiration(GetFun, DeleteFun, fun() -> mcd:set(?BUCKET, ?KEY, ?VALUE, ?TTL, 0) end),
     test_set(GetFun, DeleteFun, fun() -> {ok, mcd:async_set(?BUCKET, ?KEY, ?VALUE)} end),
@@ -107,10 +118,20 @@ test_common_errors(_Config) ->
 
 test_local(_Config) ->
     GetFun = fun() -> mcd:lget(?KEY) end,
+    GetsFun =
+        fun() ->
+                case mcd:lgets(?KEY) of
+                    {ok, Val, _Token} -> {ok, Val};
+                    {error, Error} -> {error, Error}
+                end
+        end,
     DeleteFun = fun() -> mcd:ldelete(?KEY) end,
 
     test_set(GetFun, DeleteFun, fun() -> mcd:lset(?KEY, ?VALUE) end),
+    test_set(GetsFun, DeleteFun, fun() -> mcd:lset(?KEY, ?VALUE) end),
     test_set_expiration(GetFun, DeleteFun, fun() -> mcd:lset(?KEY, ?VALUE, ?TTL) end),
+    test_set(GetFun, DeleteFun, fun() -> mcd:ladd(?KEY, ?VALUE) end),
+    test_not_stored(GetFun, DeleteFun, fun() -> mcd:ladd(?KEY, ?VALUE) end),
 
     {error, notfound} = mcd:lget(?KEY),
     try
@@ -141,6 +162,18 @@ test_set_expiration(GetFun, DeleteFun, SetFun) ->
         {ok, ?VALUE} = SetFun(),
         {ok, ?VALUE} = GetFun(),
         timer:sleep((?TTL + 1) * 1000),
+        {error, notfound} = GetFun()
+    after
+        DeleteFun()
+    end.
+
+test_not_stored(GetFun, DeleteFun, SetFun) ->
+    {error, notfound} = GetFun(),
+    try
+        {ok, ?VALUE} = SetFun(),
+        {error, notstored} = SetFun(),
+        {ok, ?VALUE} = GetFun(),
+        {ok, deleted} = DeleteFun(),
         {error, notfound} = GetFun()
     after
         DeleteFun()

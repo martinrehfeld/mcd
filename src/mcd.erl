@@ -84,6 +84,9 @@
 	set/3,
 	set/4,
 	set/5,
+	add/3,
+	add/4,
+	add/5,
 	delete/2,
 	async_set/3,
 	async_set/4,
@@ -96,6 +99,10 @@
 	lgets/1,
 	lset/2,
 	lset/3,
+	lset/4,
+	ladd/2,
+	ladd/3,
+	ladd/4,
 	ldelete/1,
 	lflush_all/0
 ]). % <cmd>('localmcd', ...)
@@ -260,6 +267,15 @@ set(ServerRef, Key, Data, 0, Expiration) -> do(ServerRef, {set, 0, Expiration}, 
 % </BC>
 set(ServerRef, Key, Data, Expiration, Flags) -> do(ServerRef, {set, Flags, Expiration}, Key, Data).
 
+-spec add(ServerRef :: server(), Key :: term(), Data :: term()) -> set_result().
+add(ServerRef, Key, Data) -> do(ServerRef, add, Key, Data).
+
+-spec add(ServerRef :: server(), Key :: term(), Data :: term(), Expiration :: expiration()) -> set_result().
+add(ServerRef, Key, Data, Expiration) -> do(ServerRef, {add, 0, Expiration}, Key, Data).
+
+-spec add(ServerRef :: server(), Key :: term(), Data :: term(), Expiration :: expiration(), Flags :: flags()) -> set_result().
+add(ServerRef, Key, Data, Expiration, Flags) -> do(ServerRef, {add, Flags, Expiration}, Key, Data).
+
 -spec delete(ServerRef :: server(), Key :: term()) -> delete_result().
 delete(ServerRef, Key) -> do(ServerRef, delete, Key).
 
@@ -282,6 +298,18 @@ lset(Key, Data) -> set(?LOCALMCDNAME, Key, Data).
 
 -spec lset(Key :: term(), Data :: term(), Expiration :: expiration()) -> set_result().
 lset(Key, Data, Expiration) -> set(?LOCALMCDNAME, Key, Data, Expiration).
+
+-spec lset(Key :: term(), Data :: term(), Expiration :: expiration(), Flags :: flags()) -> set_result().
+lset(Key, Data, Expiration, Flags) -> set(?LOCALMCDNAME, Key, Data, Expiration, Flags).
+
+-spec ladd(Key :: term(), Data :: term()) -> set_result().
+ladd(Key, Data) -> add(?LOCALMCDNAME, Key, Data).
+
+-spec ladd(Key :: term(), Data :: term(), Expiration :: expiration()) -> set_result().
+ladd(Key, Data, Expiration) -> add(?LOCALMCDNAME, Key, Data, Expiration).
+
+-spec ladd(Key :: term(), Data :: term(), Expiration :: expiration(), Flags :: flags()) -> set_result().
+ladd(Key, Data, Expiration, Flags) -> add(?LOCALMCDNAME, Key, Data, Expiration, Flags).
 
 -spec ldelete(Key :: term()) -> delete_result().
 ldelete(Key) -> delete(?LOCALMCDNAME, Key).
